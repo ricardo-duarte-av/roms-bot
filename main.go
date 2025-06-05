@@ -168,7 +168,7 @@ func main() {
 }
 
 // parseArgs parses quoted, unquoted, and -negated terms
-func parseArgs(query string) (positives []string, negatives []string) {
+func parseArgs(query string) (positives []string, negatives []string, atArg *string, err error) {
     tokens := []string{}
     curr := strings.Builder{}
     inQuote := false
@@ -200,22 +200,42 @@ func parseArgs(query string) (positives []string, negatives []string) {
     if curr.Len() > 0 {
         tokens = append(tokens, curr.String())
     }
+
+    atFound := ""
     for _, t := range tokens {
         if len(t) == 0 {
             continue
         }
-        if t[0] == '-' {
+        if t[0] == '@' {
+            if atFound != "" {
+                err = fmt.Errorf("you can only use the @ argument once")
+                return
+            }
+            atFound = t[1:]
+        } else if t[0] == '-' {
             negatives = append(negatives, t[1:])
         } else {
             positives = append(positives, t)
         }
     }
+    if atFound != "" {
+        atArg = &atFound
+    }
     return
 }
 
-func buildSQLQuery(positives, negatives []string, maxResults int) (string, []interface{}) {
+
+func buildSQLQuery(positives, negatives []string, atArg *string, maxResults int) (string, []interface{}) {
     where := []string{}
     args := []interface{}{}
+
+    // @ argument: restrict to console only
+    if atArg != nil {
+        w := "LOWER(console) LIKE ?"
+        val := "%" + strings.ToLower(*atArg) + "%"
+        where = append(where, w)
+        args = append(args, val)
+    }
 
     // Each positive: must appear in at least one of the fields
     for _, p := range positives {
@@ -264,12 +284,52 @@ func handleCommand(ctx context.Context, client *mautrix.Client, db *sql.DB, room
         return
     }
     switch cmd[0] {
+
+    //Help Message
+    case "!help":
+	reactHelp := map[string]interface{}{
+		"m.relates_to": map[string]interface{}{
+			"rel_type": "m.annotation",
+			"event_id": eventID,
+			"key":      "ℹ️",
+		},
+	}
+	_, _ = client.SendMessageEvent(ctx, roomID, event.EventReaction, reactHelp)
+
+	helpText := `Usage:
+!roms [what to search] [@console] [-exclude]
+You can search whole strings with " "
+
+Examples:
+!roms mario @nintendo  -sports
+!roms zelda @"Nintendo 3DS" -digital`
+
+	notice := map[string]interface{}{
+		"msgtype": "m.notice",
+		"body":    helpText,
+		"m.relates_to": map[string]interface{}{
+			"m.in_reply_to": map[string]interface{}{
+				"event_id": eventID,
+			},
+		},
+	}
+	_, _ = client.SendMessageEvent(ctx, roomID, event.EventMessage, notice)
+	return
+
+    //Search roms
     case "!roms":
         query := strings.TrimSpace(body[len("!roms"):])
         log.Printf("!roms command: %q", query)
 
-        positives, negatives := parseArgs(query)
-        sqlQuery, args := buildSQLQuery(positives, negatives, maxResults)
+        positives, negatives, atArg, parseErr := parseArgs(query)
+        if parseErr != nil {
+            // reply to Matrix and return
+           client.SendText(ctx, roomID, parseErr.Error())
+           return
+        }
+        sqlQuery, args := buildSQLQuery(positives, negatives, atArg, maxResults)
+
+
         rows, err := db.Query(sqlQuery, args...)
         if err != nil {
             client.SendText(ctx, roomID, "Search error: "+err.Error())
@@ -345,47 +405,51 @@ func handleCommand(ctx context.Context, client *mautrix.Client, db *sql.DB, room
         // Threading logic
         previousMsgID := eventID // Start with the user's message as the thread root
 
-        for batchStart := 0; batchStart < len(results); batchStart += batchSize {
-            batchEnd := batchStart + batchSize
-            if batchEnd > len(results) {
-                batchEnd = len(results)
-            }
-            batch := results[batchStart:batchEnd]
+	resultIndex := 1
+	for batchStart := 0; batchStart < len(results); batchStart += batchSize {
+		batchEnd := batchStart + batchSize
+		if batchEnd > len(results) {
+			batchEnd = len(results)
+		}
+		batch := results[batchStart:batchEnd]
 
-            var html strings.Builder
-            var plain strings.Builder
+		var html strings.Builder
+		var plain strings.Builder
+		for _, row := range batch {
+			html.WriteString(fmt.Sprintf(
+				"<h4>%d. %s | %s</h4>&nbsp;&nbsp;&nbsp;&nbsp;<a href=\"%s\">%s</a><br><br>",
+				resultIndex, htmlEscape(row.Section), htmlEscape(row.Console), row.Rawurl, htmlEscape(row.File),
+			))
+			plain.WriteString(fmt.Sprintf(
+				"%d. %s | %s\n\t%s\n",
+				resultIndex, row.Section, row.Console, row.File,
+			))
+			resultIndex++
+		}
 
-            html.WriteString("<table><tr><th>Section</th><th>Console</th><th>Filename</th></tr>\n")
-            for _, row := range batch {
-                plain.WriteString(fmt.Sprintf("%s - %s - %s\n", row.Section, row.Console, row.File))
-                html.WriteString(fmt.Sprintf(
-                    "<tr><td>%s</td><td>%s</td><td><a href=\"%s\">%s</a></td></tr>\n",
-                    htmlEscape(row.Section), htmlEscape(row.Console), row.Rawurl, htmlEscape(row.File),
-                ))
-            }
-            html.WriteString("</table>")
+		messageContent := map[string]interface{}{
+			"msgtype":        "m.text",
+			"body":           plain.String(),
+			"format":         "org.matrix.custom.html",
+			"formatted_body": html.String(),
+			"m.relates_to": map[string]interface{}{
+				"event_id":        eventID, // always the thread root (user message)
+				"is_falling_back": true,
+				"m.in_reply_to": map[string]interface{}{
+					"event_id": previousMsgID, // previous message or thread root
+				},
+				"rel_type": "m.thread",
+			},
+		}
+		resp, err := client.SendMessageEvent(ctx, roomID, event.EventMessage, messageContent)
+		if err != nil {
+			log.Printf("Failed to send HTML message: %v", err)
+			break
+		}
+		previousMsgID = resp.EventID // For next batch, reply to our last message
+                previousMsgID = eventID // no we dont.
+	}
 
-            messageContent := map[string]interface{}{
-                "msgtype":        "m.text",
-                "body":           plain.String(),
-                "format":         "org.matrix.custom.html",
-                "formatted_body": html.String(),
-                "m.relates_to": map[string]interface{}{
-                    "event_id":        eventID, // always the thread root (user message)
-                    "is_falling_back": true,
-                    "m.in_reply_to": map[string]interface{}{
-                        "event_id": previousMsgID, // previous message or thread root
-                    },
-                    "rel_type": "m.thread",
-                },
-            }
-            resp, err := client.SendMessageEvent(ctx, roomID, event.EventMessage, messageContent)
-            if err != nil {
-                log.Printf("Failed to send HTML message: %v", err)
-                break
-            }
-            previousMsgID = resp.EventID // For next batch, reply to our last message
-        }
     }
 }
 
