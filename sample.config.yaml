@@ -1,0 +1,5 @@
+matrix:
+  server: "https://matrix.org"
+  username: "@roms:matrix.org"
+  password: "12345678"
+  room: "!room_id:matrix.org"
