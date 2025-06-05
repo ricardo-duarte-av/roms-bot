@@ -242,6 +242,19 @@ func buildSQLQuery(positives, negatives []string, maxResults int) (string, []int
     return sql, args
 }
 
+
+func htmlEscape(s string) string {
+    replacer := strings.NewReplacer(
+        "&", "&amp;",
+        "<", "&lt;",
+        ">", "&gt;",
+        "\"", "&quot;",
+        "'", "&#39;",
+    )
+    return replacer.Replace(s)
+}
+
+
 func handleCommand(ctx context.Context, client *mautrix.Client, db *sql.DB, roomID id.RoomID, body string, eventID id.EventID) {
     const maxResults = 1000
     const batchSize = 100
@@ -341,13 +354,16 @@ func handleCommand(ctx context.Context, client *mautrix.Client, db *sql.DB, room
 
             var html strings.Builder
             var plain strings.Builder
+
+            html.WriteString("<table><tr><th>Section</th><th>Console</th><th>Filename</th></tr>\n")
             for _, row := range batch {
                 plain.WriteString(fmt.Sprintf("%s - %s - %s\n", row.Section, row.Console, row.File))
                 html.WriteString(fmt.Sprintf(
-                    "%s - %s - <a href=\"%s\">%s</a><br>",
+                    "<tr><td>%s</td><td>%s</td><td><a href=\"%s\">%s</a></td></tr>\n",
                     htmlEscape(row.Section), htmlEscape(row.Console), row.Rawurl, htmlEscape(row.File),
                 ))
             }
+            html.WriteString("</table>")
 
             messageContent := map[string]interface{}{
                 "msgtype":        "m.text",
@@ -371,16 +387,5 @@ func handleCommand(ctx context.Context, client *mautrix.Client, db *sql.DB, room
             previousMsgID = resp.EventID // For next batch, reply to our last message
         }
     }
-}
-
-func htmlEscape(s string) string {
-    replacer := strings.NewReplacer(
-        "&", "&amp;",
-        "<", "&lt;",
-        ">", "&gt;",
-        "\"", "&quot;",
-        "'", "&#39;",
-    )
-    return replacer.Replace(s)
 }
 
