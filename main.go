@@ -369,7 +369,7 @@ Examples:
             return results[i].File < results[j].File
         })
 
-        // Too many results: react with ❌️ and notify, including the number of results
+        // No results: react with ❌️ and notify, including the number of results
         if len(results) < 1 {
             reactTooMany := map[string]interface{}{
                 "m.relates_to": map[string]interface{}{
