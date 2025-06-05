@@ -1,6 +1,0 @@
-matrix:
-  server: "https://matrix.org"
-  username: "@yourbot:matrix.org"
-  password: "yourpassword"
-  room: "!roomid:matrix.org"
-
