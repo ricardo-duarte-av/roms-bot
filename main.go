@@ -392,18 +392,6 @@ Examples:
             return
         }
 
-        // React with ✅️ to confirm
-        reactOk := map[string]interface{}{
-            "m.relates_to": map[string]interface{}{
-                "rel_type": "m.annotation",
-                "event_id": eventID,
-                "key":      "✅️",
-            },
-        }
-        _, _ = client.SendMessageEvent(ctx, roomID, event.EventReaction, reactOk)
-
-
-
         // Too many results: react with ❌️ and notify, including the number of results
         if len(results) > maxResults {
             reactTooMany := map[string]interface{}{
