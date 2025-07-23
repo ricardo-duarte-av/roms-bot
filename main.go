@@ -453,9 +453,42 @@ Examples:
                 },
             }
             _, _ = client.SendMessageEvent(ctx, roomID, event.EventReaction, reactTooMany)
+
+            // Build the count query (reuse WHERE and args, but exclude LIMIT)
+            where := []string{}
+            argsForCount := []interface{}{}
+            if atArg != nil {
+                w := "LOWER(console) LIKE ?"
+                val := "%" + strings.ToLower(*atArg) + "%"
+                where = append(where, w)
+                argsForCount = append(argsForCount, val)
+            }
+            for _, p := range positives {
+                w := "(LOWER(section) LIKE ? OR LOWER(console) LIKE ? OR LOWER(file) LIKE ?)"
+                val := "%" + strings.ToLower(p) + "%"
+                where = append(where, w)
+                argsForCount = append(argsForCount, val, val, val)
+            }
+            for _, n := range negatives {
+                w := "(LOWER(section) NOT LIKE ? AND LOWER(console) NOT LIKE ? AND LOWER(file) NOT LIKE ?)"
+                val := "%" + strings.ToLower(n) + "%"
+                where = append(where, w)
+                argsForCount = append(argsForCount, val, val, val)
+            }
+            countSQL := "SELECT COUNT(*) FROM files"
+            if len(where) > 0 {
+                countSQL += " WHERE " + strings.Join(where, " AND ")
+            }
+            var totalCount int
+            err := db.QueryRow(countSQL, argsForCount...).Scan(&totalCount)
+            if err != nil {
+                client.SendText(ctx, roomID, "Error counting results: "+err.Error())
+                return
+            }
+
             tooManyMsg := map[string]interface{}{
                 "msgtype": "m.text",
-                "body":    fmt.Sprintf("Too many results: %d", len(results)),
+                "body":    fmt.Sprintf("Too many results: %d. Please refine your search.", totalCount),
                 "m.relates_to": map[string]interface{}{
                     "m.in_reply_to": map[string]interface{}{
                         "event_id": eventID,
