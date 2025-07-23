@@ -274,6 +274,39 @@ func htmlEscape(s string) string {
     return replacer.Replace(s)
 }
 
+// explainSearch generates a human-readable explanation of the search
+func explainSearch(positives, negatives []string, atArg *string) string {
+    var parts []string
+
+    // Positives
+    if len(positives) > 0 {
+        quoted := make([]string, len(positives))
+        for i, p := range positives {
+            quoted[i] = fmt.Sprintf("%q", p)
+        }
+        parts = append(parts, fmt.Sprintf("Searching for %s", strings.Join(quoted, " and ")))
+    } else {
+        parts = append(parts, "Searching for all items")
+    }
+
+    // Console (@)
+    if atArg != nil && *atArg != "" {
+        parts = append(parts, fmt.Sprintf("in console %q", *atArg))
+    }
+
+    // Negatives
+    if len(negatives) > 0 {
+        quoted := make([]string, len(negatives))
+        for i, n := range negatives {
+            quoted[i] = fmt.Sprintf("%q", n)
+        }
+        parts = append(parts, fmt.Sprintf("excluding %s", strings.Join(quoted, " and ")))
+    }
+
+    // Join all parts into a single sentence
+    return strings.Join(parts, ", ") + "."
+}
+
 
 func handleCommand(ctx context.Context, client *mautrix.Client, db *sql.DB, roomID id.RoomID, body string, eventID id.EventID) {
     const maxResults = 1000
@@ -328,6 +361,24 @@ Examples:
            return
         }
         sqlQuery, args := buildSQLQuery(positives, negatives, atArg, maxResults)
+
+        // Send explanation message first
+        explanation := explainSearch(positives, negatives, atArg)
+        explanationContent := map[string]interface{}{
+            "msgtype": "m.notice",
+            "body":    explanation,
+            "m.relates_to": map[string]interface{}{
+                "m.in_reply_to": map[string]interface{}{
+                    "event_id": eventID,
+                },
+            },
+        }
+        expResp, err := client.SendMessageEvent(ctx, roomID, event.EventMessage, explanationContent)
+        if err != nil {
+            client.SendText(ctx, roomID, "Failed to send explanation message: "+err.Error())
+            return
+        }
+        threadRootID := expResp.EventID
 
 
         rows, err := db.Query(sqlQuery, args...)
@@ -426,7 +477,7 @@ Examples:
         _, _ = client.SendMessageEvent(ctx, roomID, event.EventReaction, reactOk)
 
         // Threading logic
-        previousMsgID := eventID // Start with the user's message as the thread root
+        previousMsgID := threadRootID // Start with the explanation message as the thread root
 
 	resultIndex := 1
 	for batchStart := 0; batchStart < len(results); batchStart += batchSize {
@@ -456,7 +507,7 @@ Examples:
 			"format":         "org.matrix.custom.html",
 			"formatted_body": html.String(),
 			"m.relates_to": map[string]interface{}{
-				"event_id":        eventID, // always the thread root (user message)
+				"event_id":        threadRootID, // always the thread root (explanation message)
 				"is_falling_back": true,
 				"m.in_reply_to": map[string]interface{}{
 					"event_id": previousMsgID, // previous message or thread root
@@ -470,8 +521,7 @@ Examples:
 			break
 		}
 		previousMsgID = resp.EventID // For next batch, reply to our last message
-                previousMsgID = eventID // no we dont.
-	}
+        }
 
     }
 }
