@@ -56,6 +56,23 @@ func main() {
     count := 0
     for scanner.Scan() {
         rawurl := scanner.Text()
+    if strings.Contains(strings.ToLower(rawurl), "(cdn)") {
+        continue // skip lines that mention (CDN), case-insensitive
+    }
+    if strings.Contains(strings.ToLower(rawurl), "(encrypted)") {
+        continue // skip lines that mention (CDN), case-insensitive
+    }
+    if strings.Contains(strings.ToLower(rawurl), "audio_cd") {
+        continue // skip lines that mention (CDN), case-insensitive
+    }
+    if strings.Contains(strings.ToLower(rawurl), "audio%20cd") {
+        continue // skip lines that mention (CDN), case-insensitive
+    }
+    if strings.Contains(strings.ToLower(rawurl), "(deprecated)") {
+        continue // skip lines that mention (CDN), case-insensitive
+    }
+
+
         if !strings.HasPrefix(rawurl, prefix) {
             continue // skip lines not matching the expected format
         }
