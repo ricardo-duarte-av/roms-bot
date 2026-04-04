@@ -5,3 +5,7 @@ config.yaml
 linklist.db
 linklist.txt
 links.db
+index.txt.gz
+index.txt
+
+

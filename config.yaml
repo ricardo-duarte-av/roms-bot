@@ -2,6 +2,7 @@ matrix:
   server: "https://aguiarvieira.pt"
   username: "@roms:aguiarvieira.pt"
   password: "roms1234roms"
-  room: "!mMaJdKUByYOCaWcLJS:daedric.net"
+  #room: "!mMaJdKUByYOCaWcLJS:daedric.net"
+  room: "!fzKiHKGBZupSMYrEBR:aguiarvieira.pt"
 
 

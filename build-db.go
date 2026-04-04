@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-    infile := "linklist.txt"
+    infile := "index.txt"
     dbfile := "links.db"
 
     file, err := os.Open(infile)
@@ -42,6 +42,8 @@ func main() {
     }
 
     scanner := bufio.NewScanner(file)
+    scanner.Buffer(make([]byte, 1024*1024), 1024*1024)
+
     tx, err := db.Begin()
     if err != nil {
         log.Fatalf("Could not begin transaction: %v", err)
@@ -52,44 +54,54 @@ func main() {
     }
     defer stmt.Close()
 
-    const prefix = "https://myrient.erista.me/files/"
+    const baseURL = "https://minerva-archive.org/"
+    // rawurl format: https://minerva-archive.org/rom?name=./Section/Console/File.zip
     count := 0
     for scanner.Scan() {
-        rawurl := scanner.Text()
-    if strings.Contains(strings.ToLower(rawurl), "(cdn)") {
-        continue // skip lines that mention (CDN), case-insensitive
-    }
-    if strings.Contains(strings.ToLower(rawurl), "(encrypted)") {
-        continue // skip lines that mention (CDN), case-insensitive
-    }
-    if strings.Contains(strings.ToLower(rawurl), "audio_cd") {
-        continue // skip lines that mention (CDN), case-insensitive
-    }
-    if strings.Contains(strings.ToLower(rawurl), "audio%20cd") {
-        continue // skip lines that mention (CDN), case-insensitive
-    }
-    if strings.Contains(strings.ToLower(rawurl), "(deprecated)") {
-        continue // skip lines that mention (CDN), case-insensitive
-    }
+        line := scanner.Text()
+        lower := strings.ToLower(line)
 
+        if strings.Contains(lower, "(cdn)") {
+            continue
+        }
+        if strings.Contains(lower, "(encrypted)") {
+            continue
+        }
+        if strings.Contains(lower, "audio_cd") {
+            continue
+        }
+        if strings.Contains(lower, "audio cd") {
+            continue
+        }
+        if strings.Contains(lower, "(deprecated)") {
+            continue
+        }
 
-        if !strings.HasPrefix(rawurl, prefix) {
-            continue // skip lines not matching the expected format
+        if !strings.HasPrefix(line, "./") {
+            continue
         }
-        if !strings.HasSuffix(rawurl, ".zip") {
-            continue // skip non-zip files
+        if !strings.HasSuffix(line, ".zip") {
+            continue
         }
-        rel := strings.TrimPrefix(rawurl, prefix)
+
+        rel := strings.TrimPrefix(line, "./")
         parts := strings.SplitN(rel, "/", 3)
         if len(parts) != 3 {
-            continue // skip malformed lines
+            continue // skip entries without at least section/console/file
         }
-        section, err1 := url.QueryUnescape(parts[0])
-        console, err2 := url.QueryUnescape(parts[1])
-        filepart, err3 := url.QueryUnescape(parts[2])
-        if err1 != nil || err2 != nil || err3 != nil {
-            continue // skip lines with bad encoding
-        }
+
+        section := parts[0]
+        console := parts[1]
+        filepart := parts[2]
+
+        // Build the Minerva URL: ?name=./path with spaces and special chars encoded,
+        // but '/' kept literal. url.QueryEscape handles & and other query-breaking
+        // chars correctly; we then swap + back to %20 and unescape slashes.
+        encoded := url.QueryEscape(line)
+        encoded = strings.ReplaceAll(encoded, "+", "%20")
+        encoded = strings.ReplaceAll(encoded, "%2F", "/")
+        rawurl := baseURL + "rom?name=" + encoded
+
         _, err = stmt.Exec(section, console, filepart, rawurl)
         if err != nil {
             log.Printf("Failed to insert: %v", err)
